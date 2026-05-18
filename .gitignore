@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+.venv/
+env/
+venv/
+
+# Data — do not commit raw CICIDS2017 CSVs (large files, may contain PII)
+data/*.csv
+data/*.pcap
+
+# Trained model artifacts (regenerate with train.py)
+models/random_forest.joblib
+models/label_encoder.joblib
+
+# IDE and OS
+.vscode/
+.idea/
+*.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Streamlit
+.streamlit/secrets.toml
