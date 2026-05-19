@@ -1,34 +1,31 @@
 """
-NLG Module — Reading-level-adaptive natural language explanations via local Ollama LLM.
+NLG Module — Persona-aware, reading-level-adaptive natural language explanations via local Ollama LLM.
 
 Privacy-preserving design: all inference runs on-device through Ollama.
 No network traffic data is sent to external services.
 
-Falls back to a template-based explanation when Ollama is unavailable,
-ensuring the system degrades gracefully.
+Falls back to a template-based explanation when Ollama is unavailable.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import textwrap
 from typing import Optional
 
 import requests
 
-from modules.user_profiler import LiteracyLevel, UserProfile
+from modules.user_profiler import LiteracyLevel, Persona, UserProfile
 from modules.xai_explainer import ExplanationResult
 
 logger = logging.getLogger(__name__)
 
 OLLAMA_BASE_URL = "http://localhost:11434"
-DEFAULT_MODEL = "mistral"        # mistral or llama3 — change to match installed model
-REQUEST_TIMEOUT = 60             # seconds
+DEFAULT_MODEL = "mistral"
+REQUEST_TIMEOUT = 60
 
 
 def _build_prompt(explanation: ExplanationResult, profile: UserProfile) -> str:
-    """Construct a reading-level-targeted prompt for the LLM."""
     label = "a network attack" if explanation.predicted_label == 1 else "normal network traffic"
     confidence_pct = f"{explanation.confidence * 100:.1f}%"
 
@@ -37,29 +34,8 @@ def _build_prompt(explanation: ExplanationResult, profile: UserProfile) -> str:
         for fc in explanation.top_features[:5]
     )
 
-    level_instructions = {
-        LiteracyLevel.HOME: (
-            "Explain this to a non-technical home user. Use simple, everyday language. "
-            "Avoid technical jargon. Focus on what the threat means for the user personally "
-            "and what simple action they should take. Keep it under 80 words."
-        ),
-        LiteracyLevel.SMB: (
-            "Explain this to an IT support professional. Include which network behaviour "
-            "triggered the alert and suggest a practical remediation step. "
-            "Use clear technical language without deep security jargon. Under 120 words."
-        ),
-        LiteracyLevel.ADMIN: (
-            "Provide a full technical analysis for a SOC analyst. Include the top SHAP "
-            "features driving the classification, the likely attack vector, and recommended "
-            "immediate containment steps. Reference MITRE ATT&CK tactics if applicable. "
-            "Up to 200 words."
-        ),
-    }
-
-    instruction = level_instructions[profile.level]
-
     return textwrap.dedent(f"""
-        You are an expert cybersecurity AI assistant embedded in an Explainable AI (XAI) threat detection system.
+        You are an expert cybersecurity AI assistant inside an Explainable AI (XAI) threat detection system.
 
         Detection result:
         - Classification: {label.upper()}
@@ -67,7 +43,9 @@ def _build_prompt(explanation: ExplanationResult, profile: UserProfile) -> str:
         - Top contributing network flow features:
         {top_feature_lines}
 
-        Task: {instruction}
+        The person receiving this alert is: {profile.persona.value}
+
+        Task: {profile.tone_instruction}
 
         Write only the explanation — no headers, no markdown, no preamble.
     """).strip()
@@ -75,40 +53,122 @@ def _build_prompt(explanation: ExplanationResult, profile: UserProfile) -> str:
 
 def _template_fallback(explanation: ExplanationResult, profile: UserProfile) -> str:
     """Rule-based template explanation used when Ollama is unavailable."""
-    label_text = "ATTACK" if explanation.predicted_label == 1 else "BENIGN"
     confidence_pct = f"{explanation.confidence * 100:.1f}%"
+    is_attack = explanation.predicted_label == 1
     top = explanation.top_features[:3]
     top_str = ", ".join(f"{f.name} ({f.direction.replace('_', ' ')})" for f in top)
 
-    if profile.level == LiteracyLevel.HOME:
-        if explanation.predicted_label == 1:
-            return (
-                f"Our system detected unusual activity on your network with {confidence_pct} confidence. "
-                "This might be someone trying to access your device without permission. "
-                "We recommend restarting your router and checking that your security software is up to date."
-            )
-        else:
-            return (
-                f"Your network activity looks normal ({confidence_pct} confidence). "
-                "No immediate action is needed."
-            )
+    persona = profile.persona
 
-    if profile.level == LiteracyLevel.SMB:
-        if explanation.predicted_label == 1:
+    # --- HOME-level personas ---
+    if persona == Persona.KID:
+        if is_attack:
             return (
-                f"Threat detected ({confidence_pct} confidence). "
-                f"Key indicators: {top_str}. "
-                "Recommended action: isolate the affected host, review firewall rules, "
-                "and check for unauthorised services or open ports."
+                f"Uh oh! Something sneaky is happening on your internet ({confidence_pct} sure). "
+                "It's like a stranger trying to open your front door. "
+                "Tell a grown-up right away and don't click anything unusual!"
             )
-        else:
-            return (
-                f"Traffic classified as benign ({confidence_pct} confidence). "
-                "No immediate action required. Continue standard monitoring."
-            )
+        return "Everything looks safe! Your internet is working normally. Keep it up! 🎉"
 
-    # ADMIN
-    if explanation.predicted_label == 1:
+    if persona == Persona.TEENAGER:
+        if is_attack:
+            return (
+                f"Heads up — looks like something sketchy is going on with your network "
+                f"({confidence_pct} confidence). Someone might be trying to hack in. "
+                "Disconnect from Wi-Fi and let someone know."
+            )
+        return f"All clear — your network traffic looks normal ({confidence_pct} confidence). No action needed."
+
+    if persona == Persona.HOUSEWIFE:
+        if is_attack:
+            return (
+                f"Our system detected something unusual on your home internet ({confidence_pct} sure). "
+                "Think of it like an alarm going off at your front door. "
+                "Please restart your router and let your family know to avoid clicking strange links."
+            )
+        return "Your home internet looks safe right now. No action needed."
+
+    if persona == Persona.CASHIER:
+        if is_attack:
+            return (
+                f"Security alert on your work system ({confidence_pct} confident). "
+                "Stop what you're doing and call your manager or IT support immediately. "
+                "Don't enter any passwords until they say it's safe."
+            )
+        return "System looks normal. No action needed — continue with your work."
+
+    if persona == Persona.GENERAL_EMPLOYEE:
+        if is_attack:
+            return (
+                f"A potential security threat was detected on your network ({confidence_pct} confidence). "
+                "Please stop using sensitive systems, disconnect from the network if possible, "
+                "and contact your IT helpdesk immediately."
+            )
+        return f"Your network activity appears normal ({confidence_pct} confidence). No action required."
+
+    # --- SMB-level personas ---
+    if persona == Persona.BUSINESS_OWNER:
+        if is_attack:
+            return (
+                f"Security threat detected ({confidence_pct} confidence). "
+                "Your business data or operations may be at risk. "
+                f"Key signals: {top_str}. "
+                "Immediate action: isolate the affected device, contact your IT provider, "
+                "and consider notifying customers if data may be involved."
+            )
+        return f"Network traffic looks normal ({confidence_pct} confidence). No business impact detected."
+
+    if persona == Persona.STUDENT:
+        if is_attack:
+            top_learning = explanation.top_features[0] if explanation.top_features else None
+            learning_note = (
+                f" The strongest indicator was **{top_learning.name}** "
+                f"(SHAP={top_learning.shap_value:+.4f}), which suggests abnormal flow behaviour."
+                if top_learning else ""
+            )
+            return (
+                f"Attack detected ({confidence_pct} confidence).{learning_note} "
+                f"Key features: {top_str}. "
+                "Learning tip: this pattern is consistent with volumetric or scanning attacks "
+                "where flow statistics deviate significantly from baseline."
+            )
+        return (
+            f"Traffic classified as benign ({confidence_pct} confidence). "
+            "The model found no significant anomalies in the flow features."
+        )
+
+    if persona == Persona.EXECUTIVE:
+        if is_attack:
+            return (
+                f"RISK ALERT — {confidence_pct} confidence. "
+                "A network intrusion attempt has been detected that may impact operations or data integrity. "
+                "Recommended action: authorise your IT team to isolate the affected system immediately."
+            )
+        return f"No threat detected ({confidence_pct} confidence). Operations are unaffected."
+
+    # --- ADMIN-level personas ---
+    if persona == Persona.COMPLIANCE:
+        label_text = "ATTACK" if is_attack else "BENIGN"
+        if is_attack:
+            shap_details = "; ".join(
+                f"{f.name}={f.value:.2f} (SHAP {f.shap_value:+.4f})"
+                for f in top
+            )
+            return (
+                f"Classification: {label_text} | Confidence: {confidence_pct}\n"
+                f"Top indicators: {shap_details}\n"
+                "Compliance note: this event may trigger notification obligations under "
+                "NIST IR 800-61, ISO 27001 A.16, or GDPR Article 33 depending on data scope. "
+                "Ensure incident is logged in your audit trail with timestamp and evidence preserved."
+            )
+        return (
+            f"Classification: {label_text} | Confidence: {confidence_pct}. "
+            "No compliance-relevant indicators detected. Log for audit completeness."
+        )
+
+    # Security Analyst (default ADMIN fallback)
+    label_text = "ATTACK" if is_attack else "BENIGN"
+    if is_attack:
         shap_details = "; ".join(
             f"{f.name}={f.value:.2f} (SHAP {f.shap_value:+.4f})"
             for f in top
@@ -116,21 +176,17 @@ def _template_fallback(explanation: ExplanationResult, profile: UserProfile) -> 
         return (
             f"Classification: {label_text} | Confidence: {confidence_pct}\n"
             f"Top SHAP drivers: {shap_details}\n"
-            "Recommended: correlate with SIEM events, check for lateral movement indicators, "
-            "apply network segmentation, and initiate IR playbook if persistence is suspected."
+            "Recommended: initiate IR playbook, correlate with SIEM/EDR, "
+            "check for lateral movement, apply network segmentation."
         )
-    else:
-        return (
-            f"Classification: {label_text} | Confidence: {confidence_pct}. "
-            "No anomalous indicators in top SHAP features. Continue baseline monitoring."
-        )
+    return (
+        f"Classification: {label_text} | Confidence: {confidence_pct}. "
+        "No anomalous indicators. Continue baseline monitoring."
+    )
 
 
 class NLGModule:
-    """Generates reading-level-adaptive threat explanations using a local Ollama LLM.
-
-    All inference is performed on-device; no data leaves the local machine.
-    """
+    """Generates persona-adaptive threat explanations using a local Ollama LLM."""
 
     def __init__(
         self,
@@ -144,7 +200,6 @@ class NLGModule:
         self._ollama_available: Optional[bool] = None
 
     def _check_ollama(self) -> bool:
-        """Check whether Ollama is running and the model is available."""
         if self._ollama_available is not None:
             return self._ollama_available
         try:
@@ -152,16 +207,9 @@ class NLGModule:
             if resp.status_code == 200:
                 available_models = [m["name"].split(":")[0] for m in resp.json().get("models", [])]
                 if self.model in available_models:
-                    logger.info("Ollama is running with model '%s'.", self.model)
                     self._ollama_available = True
                     return True
-                else:
-                    logger.warning(
-                        "Ollama is running but model '%s' is not installed. "
-                        "Run: ollama pull %s",
-                        self.model,
-                        self.model,
-                    )
+                logger.warning("Ollama running but model '%s' not installed. Run: ollama pull %s", self.model, self.model)
             self._ollama_available = False
         except requests.exceptions.ConnectionError:
             logger.warning("Ollama not reachable at %s. Using template fallback.", self.base_url)
@@ -169,23 +217,12 @@ class NLGModule:
         return self._ollama_available
 
     def generate(self, explanation: ExplanationResult, profile: UserProfile) -> str:
-        """Generate a natural language explanation for the given alert and user profile.
-
-        Uses Ollama if available; otherwise returns a template-based explanation.
-
-        Args:
-            explanation: SHAP ExplanationResult from XAIExplainer.
-            profile: UserProfile determining reading level.
-
-        Returns:
-            Human-readable explanation string.
-        """
+        """Generate a natural language explanation for the given alert and user profile."""
         if self._check_ollama():
             try:
                 return self._call_ollama(explanation, profile)
             except Exception as exc:
                 logger.error("Ollama inference failed: %s — falling back to template.", exc)
-
         return _template_fallback(explanation, profile)
 
     def _call_ollama(self, explanation: ExplanationResult, profile: UserProfile) -> str:
@@ -205,7 +242,6 @@ class NLGModule:
         return response.json().get("response", "").strip()
 
     def list_available_models(self) -> list[str]:
-        """Return model names available in the local Ollama installation."""
         try:
             resp = requests.get(f"{self.base_url}/api/tags", timeout=5)
             if resp.status_code == 200:
@@ -215,6 +251,5 @@ class NLGModule:
         return []
 
     def set_model(self, model_name: str):
-        """Switch to a different Ollama model."""
         self.model = model_name
-        self._ollama_available = None   # re-check on next generate call
+        self._ollama_available = None
