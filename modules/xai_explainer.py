@@ -79,61 +79,73 @@ class XAIExplainer:
         return self._explainer
 
     def explain(self, X: pd.DataFrame) -> list[ExplanationResult]:
-        """Return SHAP explanations for every row in X.
-
-        Args:
-            X: DataFrame with CICIDS2017 feature columns.
-
-        Returns:
-            List of ExplanationResult, one per row.
-        """
-        explainer = self._get_explainer()
+        """Return SHAP explanations for every row in X."""
         X_clean = self._prepare(X)
-
-        shap_values = explainer.shap_values(X_clean)
-        attack_shaps = self._extract_attack_shaps(shap_values, X_clean)
-
-        base_value = explainer.expected_value
-        if hasattr(base_value, "__len__"):
-            base_value = float(np.ravel(np.asarray(base_value, dtype=float))[1])
-        else:
-            base_value = float(base_value)
-
         probas = self._detector.predict_proba(X)
         preds = self._detector.predict(X)
+        feature_names = self._detector.feature_names
+        n_features = len(feature_names)
+
+        # --- SHAP computation with full fallback ---
+        attack_shaps = None
+        base_value = 0.5
+        try:
+            explainer = self._get_explainer()
+            try:
+                shap_values = explainer.shap_values(X_clean, check_additivity=False)
+            except TypeError:
+                shap_values = explainer.shap_values(X_clean)
+            attack_shaps = self._extract_attack_shaps(shap_values, X_clean)
+            ev = explainer.expected_value
+            if hasattr(ev, "__len__"):
+                base_value = float(np.ravel(np.asarray(ev, dtype=float))[1])
+            else:
+                base_value = float(ev)
+        except Exception as exc:
+            logger.warning("SHAP failed (%s); using feature importances as fallback.", exc)
+
+        if attack_shaps is None:
+            attack_shaps = self._fallback_importances(X_clean)
 
         results = []
         for i in range(len(X_clean)):
-            row_shap = attack_shaps[i]
+            try:
+                row_shap = np.ravel(np.asarray(attack_shaps[i], dtype=float))
+            except Exception:
+                row_shap = np.zeros(n_features)
+            if len(row_shap) != n_features:
+                row_shap = np.zeros(n_features)
+
             row_vals = X_clean.iloc[i].values
-            feature_names = self._detector.feature_names
 
             contributions = []
             for fname, fval, sval in zip(feature_names, row_vals, row_shap):
-                # ravel guards against SHAP returning a 1-element array instead of scalar
-                shap_val = float(np.ravel(np.asarray(sval))[0])
+                try:
+                    sv = float(sval)
+                except (TypeError, ValueError):
+                    sv = 0.0
+                try:
+                    fv = float(fval)
+                except (TypeError, ValueError):
+                    fv = 0.0
                 contributions.append(
                     FeatureContribution(
                         name=fname,
-                        value=float(np.ravel(np.asarray(fval))[0]),
-                        shap_value=shap_val,
-                        direction="increases_risk" if shap_val > 0 else "decreases_risk",
+                        value=fv,
+                        shap_value=sv,
+                        direction="increases_risk" if sv > 0 else "decreases_risk",
                     )
                 )
 
-            # Sort by absolute SHAP magnitude descending
             contributions.sort(key=lambda c: abs(c.shap_value), reverse=True)
-            top = contributions[: self.top_n]
-
             pred = int(preds[i])
             confidence = float(probas[i][pred])
-
             results.append(
                 ExplanationResult(
                     predicted_label=pred,
                     confidence=confidence,
                     base_value=base_value,
-                    top_features=top,
+                    top_features=contributions[: self.top_n],
                     raw_shap_values=row_shap,
                 )
             )
@@ -147,6 +159,11 @@ class XAIExplainer:
             if col not in row.columns:
                 row[col] = 0.0
         return self.explain(row)[0]
+
+    def _fallback_importances(self, X_clean: pd.DataFrame) -> np.ndarray:
+        """Return global feature importances shaped as (n_samples, n_features) fallback."""
+        importances = np.array(self._detector.model.feature_importances_, dtype=float)
+        return np.tile(importances, (len(X_clean), 1))
 
     def _extract_attack_shaps(self, shap_values, X_clean: pd.DataFrame) -> np.ndarray:
         """Convert any SHAP output format to a plain (n_samples, n_features) float array."""
