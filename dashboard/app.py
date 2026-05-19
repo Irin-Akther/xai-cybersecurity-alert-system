@@ -445,6 +445,10 @@ with tab_about:
 
 **Status:** Patent-Pending Research
 
+🌐 **Live Demo:** [xai-cybersecurity-alert-system-flmwn94cvuxsyllsvudhsl.streamlit.app](https://xai-cybersecurity-alert-system-flmwn94cvuxsyllsvudhsl.streamlit.app/)
+
+💻 **Source Code:** [github.com/Irin-Akther/xai-cybersecurity-alert-system](https://github.com/Irin-Akther/xai-cybersecurity-alert-system)
+
 ### 10 User Personas
 
 | Persona | Level | Explanation Style |

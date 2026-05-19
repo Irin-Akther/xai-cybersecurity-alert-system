@@ -4,6 +4,10 @@
 
 > ⚠️ Patent-pending research. All rights reserved.
 
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Streamlit-FF4B4B?style=for-the-badge&logo=streamlit)](https://xai-cybersecurity-alert-system-flmwn94cvuxsyllsvudhsl.streamlit.app/)
+
+🚀 **[Try the live demo →](https://xai-cybersecurity-alert-system-flmwn94cvuxsyllsvudhsl.streamlit.app/)**
+
 ---
 
 ## Overview
