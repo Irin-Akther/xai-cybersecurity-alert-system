@@ -40,8 +40,9 @@ The XAI Cybersecurity Alert System detects network intrusions using a Random For
 │                                        │                           │
 │                          ┌─────────────▼─────────────┐            │
 │                          │       NLG Module           │            │
-│                          │  Ollama LLM (on-device)    │            │
-│                          │  + Template fallback       │            │
+│                          │  BaseLanguageGenerator     │            │
+│                          │  OllamaGenerator (LLM)     │            │
+│                          │  TemplateGenerator (rules) │            │
 │                          └─────────────┬─────────────┘            │
 │                                        │                           │
 │                          ┌─────────────▼─────────────┐            │
@@ -51,7 +52,7 @@ The XAI Cybersecurity Alert System detects network intrusions using a Random For
 │                                        │                           │
 │                          ┌─────────────▼─────────────┐            │
 │                          │    Streamlit Dashboard     │            │
-│                          │  6 Scenarios │ 5 Tabs      │            │
+│                          │  6 Scenarios │ 6 Tabs      │            │
 │                          └───────────────────────────┘            │
 └──────────────────────────────────────────────────────────────────┘
 ```
@@ -65,10 +66,12 @@ The XAI Cybersecurity Alert System detects network intrusions using a Random For
 | `modules/threat_detector.py` | Random Forest classifier on 60 CICIDS2017 features; synthetic data fallback if no CSV provided |
 | `modules/xai_explainer.py` | SHAP `TreeExplainer` — per-prediction feature attribution with direction and magnitude |
 | `modules/user_profiler.py` | **10-persona** literacy classifier mapping to 3 reading levels (HOME / SMB / ADMIN) |
-| `modules/nlg_module.py` | Persona-aware NLG via local Ollama LLM; template fallback for offline use |
-| `modules/remediation_card.py` | Structured `AlertCard` with persona-specific steps and MITRE ATT&CK mapping |
-| `app.py` | Streamlit dashboard — entry point for local and cloud deployment |
-| `train.py` | CLI training script supporting real CICIDS2017 CSV or synthetic data |
+| `modules/nlg_module.py` | Vendor-neutral NLG via abstract `BaseLanguageGenerator` interface; `OllamaGenerator` (on-device LLM) and `TemplateGenerator` (rule-based fallback) implementations |
+| `modules/remediation_card.py` | Structured `AlertCard` with persona-specific steps, plain-language confidence explanation, and MITRE ATT&CK mapping |
+| `app.py` | Streamlit dashboard — entry point for local deployment |
+| `dashboard/app.py` | Streamlit dashboard — entry point for Streamlit Cloud deployment |
+| `train.py` | CLI training script; auto-detects `data/cicids2017.csv`, prints class distribution, supports synthetic fallback |
+| `evaluate.py` | CLI evaluation script; 20% holdout, classification report, confusion matrix, per-attack-type detection rates, patent-ready metrics JSON |
 
 ---
 
@@ -124,14 +127,28 @@ If Ollama is not running, the system automatically falls back to built-in templa
 ### 3. Train the model
 
 ```bash
-# Uses synthetic CICIDS2017-schema data (no CSV needed):
+# Auto-detects data/cicids2017.csv — prints class distribution, then trains:
 python train.py
 
-# With a real CICIDS2017 CSV:
+# With an explicit path:
 python train.py --data data/Friday-WorkingHours.csv
+
+# If no CSV is found, synthetic CICIDS2017-schema data is generated automatically.
 ```
 
-### 4. Launch the dashboard
+### 4. Evaluate the model
+
+```bash
+python evaluate.py
+```
+
+Produces accuracy, precision, recall, F1-score, confusion matrix, and per-attack-type detection rates. Saves patent-ready metrics to `models/evaluation_metrics.json`. Example output:
+
+```
+Overall Accuracy: 99.2% | Macro F1: 98.7% | Test rows: 51,012
+```
+
+### 5. Launch the dashboard
 
 ```bash
 streamlit run app.py
@@ -145,7 +162,13 @@ Then open [http://localhost:8501](http://localhost:8501) in your browser.
 
 Designed for the **CICIDS2017** (Canadian Institute for Cybersecurity Intrusion Detection System 2017) dataset — 60 network flow features covering DDoS, DoS, PortScan, Brute Force, Web Attack, Bot, and Infiltration traffic.
 
-Place any CICIDS2017 CSV file in `data/` and run `train.py`. If no file is provided, the system generates synthetic data with identical feature schema for development and demonstration.
+### Using real CICIDS2017 data
+
+1. Download from the [UNB CIC datasets page](https://www.unb.ca/cic/datasets/ids-2017.html)
+2. Place any CSV file (e.g. `Friday-WorkingHours.pcap_ISCX.csv`) at `data/cicids2017.csv`
+3. Run `python train.py` — the script auto-detects the file and prints a class distribution summary
+
+If no CSV is provided, the system generates synthetic data with identical 60-feature schema for development and demonstration.
 
 ---
 
@@ -155,8 +178,9 @@ Place any CICIDS2017 CSV file in `data/` and run `train.py`. If no file is provi
 |-----------|------------------|
 | Threat detection | Runs fully local — no traffic data leaves the machine |
 | SHAP attribution | Computed in-process — no feature values transmitted |
-| LLM explanation | Ollama runs on-device — no prompts sent to cloud APIs |
-| Dashboard | No telemetry, no user tracking, no data collection |
+| LLM explanation | On-device via `BaseLanguageGenerator` interface — no prompts sent to cloud APIs |
+| Dashboard | No telemetry, no external tracking |
+| User Study responses | Stored locally (CSV) — no data sent to third-party services |
 
 ---
 
@@ -166,13 +190,22 @@ Place any CICIDS2017 CSV file in `data/` and run `train.py`. If no file is provi
 The first threat explanation system to serve **10 distinct user personas** — from children to compliance auditors — using a unified SHAP-to-NLG pipeline. Each persona receives tailored language, analogies, and detail depth rather than a one-size-fits-all alert.
 
 ### 2. Privacy-Preserving Explanation Pipeline
-End-to-end on-device processing via **Ollama** eliminates dependency on cloud LLM APIs. Sensitive network telemetry (flow features, SHAP values, IP addresses) never leaves the local environment — a critical requirement for enterprise and government deployments.
+End-to-end on-device processing eliminates dependency on cloud LLM APIs. Sensitive network telemetry (flow features, SHAP values, IP addresses) never leaves the local environment — a critical requirement for enterprise and government deployments.
 
-### 3. SHAP-to-Remediation Mapping
+### 3. Vendor-Neutral LLM Architecture
+The NLG module is built on an abstract `BaseLanguageGenerator` interface — patent claims cover any on-device language generation backend (Ollama, llama.cpp, GPT4All, or future runtimes) without binding to a specific vendor. The system auto-selects the best available generator at runtime with graceful template fallback.
+
+### 4. Plain-Language Confidence Communication
+Every alert includes a **plain-language confidence explanation** calibrated to the model's certainty: "highly confident," "moderately confident," "low confidence," or "informational only" — enabling non-technical users to correctly calibrate their response urgency without understanding probability scores.
+
+### 5. SHAP-to-Remediation Mapping
 SHAP feature attributions are automatically translated into **persona-specific, actionable remediation steps** — with MITRE ATT&CK tactic references for security professionals and plain-language instructions for non-technical users.
 
-### 4. Breadth-First Attack Coverage
+### 6. Breadth-First Attack Coverage
 Six pre-built scenarios covering the full attack lifecycle — from initial access (suspicious links, port scans) through credential attacks (SSH brute force) to impact (DDoS) and persistence (malware C2 beaconing) — enabling demonstrations across the entire MITRE ATT&CK framework.
+
+### 7. Embedded User Study Framework
+An integrated **User Study tab** collects structured feedback (comprehension, trust, actionability, overall satisfaction) directly in the dashboard — enabling live usability data collection for research papers and NIW evidence without external survey tools.
 
 ---
 
