@@ -14,6 +14,11 @@ data/*.pcap
 # Trained model artifacts (regenerate with train.py)
 models/random_forest.joblib
 models/label_encoder.joblib
+models/training_metrics.json
+
+# Keep directory structure in git
+!data/.gitkeep
+!models/.gitkeep
 
 # IDE and OS
 .vscode/
