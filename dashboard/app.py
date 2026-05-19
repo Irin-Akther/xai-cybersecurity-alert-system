@@ -18,7 +18,11 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from modules.nlg_module import NLGModule
+import csv
+import datetime
+import os
+
+from modules.nlg_module import NLGModule, _template_fallback
 from modules.remediation_card import AlertCard, RemediationCardBuilder
 from modules.threat_detector import FEATURE_COLS, ThreatDetector
 from modules.user_profiler import (
@@ -28,7 +32,14 @@ from modules.user_profiler import (
     UserProfiler,
     make_profile,
 )
-from modules.xai_explainer import XAIExplainer
+from modules.xai_explainer import ExplanationResult, FeatureContribution, XAIExplainer
+
+_IS_CLOUD = os.path.exists("/mount/src")
+_RESPONSES_PATH = (
+    Path("/tmp/user_study_responses.csv")
+    if _IS_CLOUD
+    else PROJECT_ROOT / "data" / "user_study_responses.csv"
+)
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -449,17 +460,15 @@ with tab_study:
     st.divider()
 
     sample_profile = make_profile(Persona.GENERAL_EMPLOYEE)
-    from modules.xai_explainer import ExplanationResult as _ER, FeatureContribution as _FC
-    from modules.nlg_module import _template_fallback as _tf
-    _sample_exp = _ER(
+    _sample_exp = ExplanationResult(
         predicted_label=1, confidence=0.91, base_value=0.5,
         top_features=[
-            _FC("Flow Packets/s", 450000.0, 0.38, "increases_risk"),
-            _FC("SYN Flag Count", 5.0, 0.21, "increases_risk"),
-            _FC("Flow Duration", 1200.0, 0.14, "increases_risk"),
+            FeatureContribution("Flow Packets/s", 450000.0, 0.38, "increases_risk"),
+            FeatureContribution("SYN Flag Count", 5.0, 0.21, "increases_risk"),
+            FeatureContribution("Flow Duration", 1200.0, 0.14, "increases_risk"),
         ],
     )
-    _sample_text = _tf(_sample_exp, sample_profile)
+    _sample_text = _template_fallback(_sample_exp, sample_profile)
     st.markdown(
         "<div style='background:#ff4b4b20;border-left:5px solid #ff4b4b;"
         "padding:14px;border-radius:6px;margin-bottom:12px'>"
@@ -490,28 +499,26 @@ with tab_study:
         submitted = st.form_submit_button("Submit Response", type="primary", use_container_width=True)
 
     if submitted:
-        import csv as _csv2
-        import datetime as _dt2
-        _rpath = PROJECT_ROOT / "data" / "user_study_responses.csv"
-        _rpath.parent.mkdir(parents=True, exist_ok=True)
-        _write_hdr = not _rpath.exists()
-        with open(_rpath, "a", newline="", encoding="utf-8") as _f:
-            _w = _csv2.writer(_f)
-            if _write_hdr:
-                _w.writerow(["timestamp", "q1_understood_what", "q2_understood_action",
-                             "q3_clarity", "q4_would_act", "q5_background"])
-            _w.writerow([_dt2.datetime.now().isoformat(timespec="seconds"), q1, q2, q3, q4, q5])
-        st.success("Thank you! Your response has been recorded.")
-
-    _rpath2 = PROJECT_ROOT / "data" / "user_study_responses.csv"
-    if _rpath2.exists():
         try:
-            import csv as _csv3
-            with open(_rpath2, encoding="utf-8") as _f2:
-                _count = sum(1 for _ in _csv3.reader(_f2)) - 1
+            _RESPONSES_PATH.parent.mkdir(parents=True, exist_ok=True)
+            _write_hdr = not _RESPONSES_PATH.exists()
+            with open(_RESPONSES_PATH, "a", newline="", encoding="utf-8") as _f:
+                _w = csv.writer(_f)
+                if _write_hdr:
+                    _w.writerow(["timestamp", "q1_understood_what", "q2_understood_action",
+                                 "q3_clarity", "q4_would_act", "q5_background"])
+                _w.writerow([datetime.datetime.now().isoformat(timespec="seconds"), q1, q2, q3, q4, q5])
+            st.success("Thank you! Your response has been recorded.")
+        except Exception as _e:
+            st.warning(f"Could not save response: {_e}")
+
+    if _RESPONSES_PATH.exists():
+        try:
+            with open(_RESPONSES_PATH, encoding="utf-8") as _f2:
+                _count = sum(1 for _ in csv.reader(_f2)) - 1
             st.metric("Responses collected so far", max(0, _count))
         except Exception:
-            pass
+            st.metric("Responses collected so far", 0)
     else:
         st.metric("Responses collected so far", 0)
 

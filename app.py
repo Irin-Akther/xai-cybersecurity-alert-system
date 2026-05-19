@@ -21,7 +21,11 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from modules.nlg_module import NLGModule
+import csv
+import datetime
+import os
+
+from modules.nlg_module import NLGModule, _template_fallback
 from modules.remediation_card import AlertCard, RemediationCardBuilder
 from modules.threat_detector import FEATURE_COLS, ThreatDetector
 from modules.user_profiler import (
@@ -31,7 +35,15 @@ from modules.user_profiler import (
     UserProfiler,
     make_profile,
 )
-from modules.xai_explainer import XAIExplainer
+from modules.xai_explainer import ExplanationResult, FeatureContribution, XAIExplainer
+
+# On Streamlit Cloud /mount/src is read-only; write user-study responses to /tmp
+_IS_CLOUD = os.path.exists("/mount/src")
+_RESPONSES_PATH = (
+    Path("/tmp/user_study_responses.csv")
+    if _IS_CLOUD
+    else PROJECT_ROOT / "data" / "user_study_responses.csv"
+)
 
 # ---------------------------------------------------------------------------
 # Page config
@@ -457,8 +469,6 @@ with tab_study:
     # --- Sample alert rendered for General Employee persona ---
     st.subheader("Sample Alert")
     sample_profile = make_profile(Persona.GENERAL_EMPLOYEE)
-    from modules.xai_explainer import ExplanationResult, FeatureContribution
-    from modules.remediation_card import AlertCard
     _sample_exp = ExplanationResult(
         predicted_label=1,
         confidence=0.91,
@@ -469,7 +479,6 @@ with tab_study:
             FeatureContribution("Flow Duration", 1200.0, 0.14, "increases_risk"),
         ],
     )
-    from modules.nlg_module import _template_fallback
     _sample_text = _template_fallback(_sample_exp, sample_profile)
     st.markdown(
         "<div style='background:#ff4b4b20;border-left:5px solid #ff4b4b;"
@@ -519,32 +528,30 @@ with tab_study:
         submitted = st.form_submit_button("Submit Response", type="primary", use_container_width=True)
 
     if submitted:
-        import csv
-        import datetime as _dt
-        responses_path = PROJECT_ROOT / "data" / "user_study_responses.csv"
-        responses_path.parent.mkdir(parents=True, exist_ok=True)
-        write_header = not responses_path.exists()
-        with open(responses_path, "a", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            if write_header:
-                writer.writerow(["timestamp", "q1_understood_what", "q2_understood_action",
-                                 "q3_clarity", "q4_would_act", "q5_background"])
-            writer.writerow([
-                _dt.datetime.now().isoformat(timespec="seconds"),
-                q1, q2, q3, q4, q5,
-            ])
-        st.success("Thank you! Your response has been recorded.")
+        try:
+            _RESPONSES_PATH.parent.mkdir(parents=True, exist_ok=True)
+            write_header = not _RESPONSES_PATH.exists()
+            with open(_RESPONSES_PATH, "a", newline="", encoding="utf-8") as f:
+                writer = csv.writer(f)
+                if write_header:
+                    writer.writerow(["timestamp", "q1_understood_what", "q2_understood_action",
+                                     "q3_clarity", "q4_would_act", "q5_background"])
+                writer.writerow([
+                    datetime.datetime.now().isoformat(timespec="seconds"),
+                    q1, q2, q3, q4, q5,
+                ])
+            st.success("Thank you! Your response has been recorded.")
+        except Exception as _e:
+            st.warning(f"Could not save response: {_e}")
 
     # Running count (no individual data shown)
-    responses_path = PROJECT_ROOT / "data" / "user_study_responses.csv"
-    if responses_path.exists():
+    if _RESPONSES_PATH.exists():
         try:
-            import csv as _csv
-            with open(responses_path, encoding="utf-8") as f:
-                count = sum(1 for _ in _csv.reader(f)) - 1  # subtract header
+            with open(_RESPONSES_PATH, encoding="utf-8") as f:
+                count = sum(1 for _ in csv.reader(f)) - 1
             st.metric("Responses collected so far", max(0, count))
         except Exception:
-            pass
+            st.metric("Responses collected so far", 0)
     else:
         st.metric("Responses collected so far", 0)
 
