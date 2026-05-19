@@ -78,16 +78,16 @@ One of the core innovations of this system is **persona-adaptive explanations** 
 
 | # | Persona | Level | Explanation Style |
 |---|---------|-------|-------------------|
-| 1 | 👦 Kid | HOME | Super simple words, everyday toy/door analogies, under 50 words |
-| 2 | 🧑 Teenager | HOME | Casual language, gaming/social media analogies, practical steps |
-| 3 | 🏠 Housewife | HOME | Home and family safety analogies, no jargon |
-| 4 | 🛒 Cashier | HOME | One clear action, workplace focus, call manager |
-| 5 | 💼 General Employee | HOME | Plain office language, contact IT helpdesk |
-| 6 | 🏢 Business Owner | SMB | Business risk, cost and operations impact |
-| 7 | 🎓 Student | SMB | Technical context with learning tips, SHAP feature explanation |
-| 8 | 👔 Executive / Manager | SMB | One-sentence risk + one-sentence action, no jargon |
-| 9 | 📋 Compliance / Auditor | ADMIN | GDPR / NIST / ISO 27001 framing, audit trail steps |
-| 10 | 🔐 Security Analyst | ADMIN | Full SHAP detail, MITRE ATT&CK, IR playbook |
+| 1 | Kid | HOME | Super simple words, everyday toy/door analogies, under 50 words |
+| 2 | Teenager | HOME | Casual language, gaming/social media analogies, practical steps |
+| 3 | Housewife | HOME | Home and family safety analogies, no jargon |
+| 4 | Cashier | HOME | One clear action, workplace focus, call manager |
+| 5 | General Employee | HOME | Plain office language, contact IT helpdesk |
+| 6 | Business Owner | SMB | Business risk, cost and operations impact |
+| 7 | Student | SMB | Technical context with learning tips, SHAP feature explanation |
+| 8 | Executive / Manager | SMB | One-sentence risk + one-sentence action, no jargon |
+| 9 | Compliance / Auditor | ADMIN | GDPR / NIST / ISO 27001 framing, audit trail steps |
+| 10 | Security Analyst | ADMIN | Full SHAP detail, MITRE ATT&CK, IR playbook |
 
 ---
 
