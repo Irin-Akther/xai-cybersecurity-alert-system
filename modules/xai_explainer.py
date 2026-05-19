@@ -91,20 +91,11 @@ class XAIExplainer:
         X_clean = self._prepare(X)
 
         shap_values = explainer.shap_values(X_clean)
-        # Robust extraction: handles list, 3-D array (n_samples, n_features, n_classes),
-        # or a SHAP Explanation object returned by newer shap versions.
-        if isinstance(shap_values, list):
-            attack_shaps = np.array(shap_values[1])
-        elif hasattr(shap_values, "values"):
-            v = np.array(shap_values.values)
-            attack_shaps = v[:, :, 1] if v.ndim == 3 else v
-        else:
-            sv = np.array(shap_values)
-            attack_shaps = sv[:, :, 1] if sv.ndim == 3 else sv
+        attack_shaps = self._extract_attack_shaps(shap_values, X_clean)
 
         base_value = explainer.expected_value
         if hasattr(base_value, "__len__"):
-            base_value = float(np.ravel(base_value)[1])
+            base_value = float(np.ravel(np.asarray(base_value, dtype=float))[1])
         else:
             base_value = float(base_value)
 
@@ -157,6 +148,40 @@ class XAIExplainer:
                 row[col] = 0.0
         return self.explain(row)[0]
 
+    def _extract_attack_shaps(self, shap_values, X_clean: pd.DataFrame) -> np.ndarray:
+        """Convert any SHAP output format to a plain (n_samples, n_features) float array."""
+        n_samples = len(X_clean)
+        n_features = len(self._detector.feature_names)
+        try:
+            # Unwrap list [benign, attack]
+            if isinstance(shap_values, list):
+                raw = shap_values[1]
+            else:
+                raw = shap_values
+
+            # Unwrap SHAP Explanation objects (potentially nested)
+            for _ in range(3):
+                if hasattr(raw, "values"):
+                    raw = raw.values
+                else:
+                    break
+
+            arr = np.asarray(raw, dtype=float)
+
+            if arr.ndim == 3:        # (n_samples, n_features, n_classes)
+                arr = arr[:, :, 1]
+            elif arr.ndim == 1:      # (n_features,) — single sample squeezed
+                arr = arr.reshape(1, n_features)
+            # ndim == 2 is already (n_samples, n_features)
+
+            if arr.shape[0] != n_samples:
+                arr = arr.reshape(n_samples, n_features)
+
+            return arr
+        except Exception as exc:
+            logger.warning("SHAP extraction failed (%s); using zeros.", exc)
+            return np.zeros((n_samples, n_features))
+
     def _prepare(self, X: pd.DataFrame) -> pd.DataFrame:
         X_clean = X.copy()
         for col in self._detector.feature_names:
@@ -172,12 +197,5 @@ class XAIExplainer:
         explainer = self._get_explainer()
         X_clean = self._prepare(X)
         shap_values = explainer.shap_values(X_clean)
-        if isinstance(shap_values, list):
-            attack_shaps = np.array(shap_values[1])
-        elif hasattr(shap_values, "values"):
-            v = np.array(shap_values.values)
-            attack_shaps = v[:, :, 1] if v.ndim == 3 else v
-        else:
-            sv = np.array(shap_values)
-            attack_shaps = sv[:, :, 1] if sv.ndim == 3 else sv
+        attack_shaps = self._extract_attack_shaps(shap_values, X_clean)
         return attack_shaps, self._detector.feature_names
