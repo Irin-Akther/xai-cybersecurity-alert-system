@@ -160,6 +160,29 @@ def _get_mitre_hint(label_text: str) -> Optional[str]:
 # AlertCard
 # ---------------------------------------------------------------------------
 
+def _confidence_explanation(confidence: float) -> str:
+    """Plain-language description of model confidence for non-technical users."""
+    if confidence >= 0.85:
+        return (
+            "The system is highly confident in this detection. "
+            "The network pattern strongly matches known attack signatures."
+        )
+    if confidence >= 0.60:
+        return (
+            "The system is moderately confident. "
+            "This pattern is suspicious but could have other explanations — treat it as a warning."
+        )
+    if confidence >= 0.40:
+        return (
+            "The system has low confidence. "
+            "This may be a false alarm, but it is worth a quick check."
+        )
+    return (
+        "The system flagged this for informational purposes only. "
+        "No immediate action is needed."
+    )
+
+
 @dataclass
 class AlertCard:
     alert_id: str
@@ -167,6 +190,7 @@ class AlertCard:
     severity: str
     label_text: str
     confidence: float
+    confidence_explanation: str
     user_explanation: str
     top_features: list[dict]
     remediation_steps: list[str]
@@ -182,6 +206,7 @@ class AlertCard:
             "severity": self.severity,
             "label": self.label_text,
             "confidence": round(self.confidence, 4),
+            "confidence_explanation": self.confidence_explanation,
             "literacy_level": self.literacy_level,
             "persona": self.persona,
             "explanation": self.user_explanation,
@@ -245,6 +270,7 @@ class RemediationCardBuilder:
             severity=severity,
             label_text=label_text,
             confidence=explanation.confidence,
+            confidence_explanation=_confidence_explanation(explanation.confidence),
             user_explanation=nlg_text,
             top_features=[f.as_dict() for f in explanation.top_features[:10]],
             remediation_steps=remediation,

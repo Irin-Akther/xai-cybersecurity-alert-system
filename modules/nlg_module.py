@@ -1,16 +1,21 @@
 """
-NLG Module — Persona-aware, reading-level-adaptive natural language explanations via local Ollama LLM.
+NLG Module — Persona-aware, reading-level-adaptive natural language explanations.
 
-Privacy-preserving design: all inference runs on-device through Ollama.
-No network traffic data is sent to external services.
+Privacy-preserving design: all inference runs on-device.
+No network traffic data is sent to external cloud services.
 
-Falls back to a template-based explanation when Ollama is unavailable.
+Architecture:
+  BaseLanguageGenerator  — abstract interface for any on-device LLM backend
+  OllamaGenerator        — concrete implementation wrapping local Ollama
+  TemplateGenerator      — rule-based fallback; no LLM dependency
+  NLGModule              — public API; auto-selects backend and exposes generate()
 """
 
 from __future__ import annotations
 
 import logging
 import textwrap
+from abc import ABC, abstractmethod
 from typing import Optional
 
 import requests
@@ -25,15 +30,17 @@ DEFAULT_MODEL = "mistral"
 REQUEST_TIMEOUT = 60
 
 
+# ---------------------------------------------------------------------------
+# Prompt builder (shared by all generators)
+# ---------------------------------------------------------------------------
+
 def _build_prompt(explanation: ExplanationResult, profile: UserProfile) -> str:
     label = "a network attack" if explanation.predicted_label == 1 else "normal network traffic"
     confidence_pct = f"{explanation.confidence * 100:.1f}%"
-
     top_feature_lines = "\n".join(
         f"  - {fc.name}: {fc.value:.2f} (SHAP={fc.shap_value:+.4f}, {fc.direction.replace('_', ' ')})"
         for fc in explanation.top_features[:5]
     )
-
     return textwrap.dedent(f"""
         You are an expert cybersecurity AI assistant inside an Explainable AI (XAI) threat detection system.
 
@@ -51,16 +58,18 @@ def _build_prompt(explanation: ExplanationResult, profile: UserProfile) -> str:
     """).strip()
 
 
+# ---------------------------------------------------------------------------
+# Template fallback (standalone function; shared by TemplateGenerator)
+# ---------------------------------------------------------------------------
+
 def _template_fallback(explanation: ExplanationResult, profile: UserProfile) -> str:
-    """Rule-based template explanation used when Ollama is unavailable."""
+    """Rule-based template explanation used when no LLM backend is available."""
     confidence_pct = f"{explanation.confidence * 100:.1f}%"
     is_attack = explanation.predicted_label == 1
     top = explanation.top_features[:3]
     top_str = ", ".join(f"{f.name} ({f.direction.replace('_', ' ')})" for f in top)
-
     persona = profile.persona
 
-    # --- HOME-level personas ---
     if persona == Persona.KID:
         if is_attack:
             return (
@@ -106,7 +115,6 @@ def _template_fallback(explanation: ExplanationResult, profile: UserProfile) -> 
             )
         return f"Your network activity appears normal ({confidence_pct} confidence). No action required."
 
-    # --- SMB-level personas ---
     if persona == Persona.BUSINESS_OWNER:
         if is_attack:
             return (
@@ -146,13 +154,11 @@ def _template_fallback(explanation: ExplanationResult, profile: UserProfile) -> 
             )
         return f"No threat detected ({confidence_pct} confidence). Operations are unaffected."
 
-    # --- ADMIN-level personas ---
     if persona == Persona.COMPLIANCE:
         label_text = "ATTACK" if is_attack else "BENIGN"
         if is_attack:
             shap_details = "; ".join(
-                f"{f.name}={f.value:.2f} (SHAP {f.shap_value:+.4f})"
-                for f in top
+                f"{f.name}={f.value:.2f} (SHAP {f.shap_value:+.4f})" for f in top
             )
             return (
                 f"Classification: {label_text} | Confidence: {confidence_pct}\n"
@@ -170,8 +176,7 @@ def _template_fallback(explanation: ExplanationResult, profile: UserProfile) -> 
     label_text = "ATTACK" if is_attack else "BENIGN"
     if is_attack:
         shap_details = "; ".join(
-            f"{f.name}={f.value:.2f} (SHAP {f.shap_value:+.4f})"
-            for f in top
+            f"{f.name}={f.value:.2f} (SHAP {f.shap_value:+.4f})" for f in top
         )
         return (
             f"Classification: {label_text} | Confidence: {confidence_pct}\n"
@@ -185,8 +190,40 @@ def _template_fallback(explanation: ExplanationResult, profile: UserProfile) -> 
     )
 
 
-class NLGModule:
-    """Generates persona-adaptive threat explanations using a local Ollama LLM."""
+# ---------------------------------------------------------------------------
+# Abstract base class
+# ---------------------------------------------------------------------------
+
+class BaseLanguageGenerator(ABC):
+    """Abstract interface for any locally-executing language generation backend.
+
+    Implementations must operate entirely on-device with no data transmitted
+    to external cloud services, satisfying the privacy-preserving design
+    requirement of the XAI Cybersecurity Alert System.
+
+    Patent note: claims refer to a 'language generation module' rather than
+    any specific vendor implementation, allowing this interface to cover
+    Ollama, llama.cpp, GPT4All, or any future on-device LLM runtime.
+    """
+
+    @abstractmethod
+    def generate(self, prompt: str) -> str:
+        """Generate a natural language response from a formatted prompt string.
+
+        Args:
+            prompt: A structured text prompt describing the threat and persona context.
+
+        Returns:
+            A plain-text natural language explanation suitable for the target persona.
+        """
+
+
+# ---------------------------------------------------------------------------
+# Ollama implementation
+# ---------------------------------------------------------------------------
+
+class OllamaGenerator(BaseLanguageGenerator):
+    """Concrete generator that calls a locally-running Ollama LLM server."""
 
     def __init__(
         self,
@@ -197,36 +234,30 @@ class NLGModule:
         self.model = model
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
-        self._ollama_available: Optional[bool] = None
+        self._available: Optional[bool] = None
 
-    def _check_ollama(self) -> bool:
-        if self._ollama_available is not None:
-            return self._ollama_available
+    def is_available(self) -> bool:
+        """Check whether Ollama is reachable and the configured model is installed."""
+        if self._available is not None:
+            return self._available
         try:
             resp = requests.get(f"{self.base_url}/api/tags", timeout=5)
             if resp.status_code == 200:
-                available_models = [m["name"].split(":")[0] for m in resp.json().get("models", [])]
-                if self.model in available_models:
-                    self._ollama_available = True
+                models = [m["name"].split(":")[0] for m in resp.json().get("models", [])]
+                if self.model in models:
+                    self._available = True
                     return True
-                logger.warning("Ollama running but model '%s' not installed. Run: ollama pull %s", self.model, self.model)
-            self._ollama_available = False
+                logger.warning(
+                    "Ollama running but model '%s' not installed. Run: ollama pull %s",
+                    self.model, self.model,
+                )
+            self._available = False
         except requests.exceptions.ConnectionError:
-            logger.warning("Ollama not reachable at %s. Using template fallback.", self.base_url)
-            self._ollama_available = False
-        return self._ollama_available
+            logger.warning("Ollama not reachable at %s.", self.base_url)
+            self._available = False
+        return self._available
 
-    def generate(self, explanation: ExplanationResult, profile: UserProfile) -> str:
-        """Generate a natural language explanation for the given alert and user profile."""
-        if self._check_ollama():
-            try:
-                return self._call_ollama(explanation, profile)
-            except Exception as exc:
-                logger.error("Ollama inference failed: %s — falling back to template.", exc)
-        return _template_fallback(explanation, profile)
-
-    def _call_ollama(self, explanation: ExplanationResult, profile: UserProfile) -> str:
-        prompt = _build_prompt(explanation, profile)
+    def generate(self, prompt: str) -> str:
         payload = {
             "model": self.model,
             "prompt": prompt,
@@ -241,7 +272,7 @@ class NLGModule:
         response.raise_for_status()
         return response.json().get("response", "").strip()
 
-    def list_available_models(self) -> list[str]:
+    def list_models(self) -> list[str]:
         try:
             resp = requests.get(f"{self.base_url}/api/tags", timeout=5)
             if resp.status_code == 200:
@@ -250,6 +281,98 @@ class NLGModule:
             pass
         return []
 
+    def set_model(self, name: str):
+        self.model = name
+        self._available = None
+
+
+# ---------------------------------------------------------------------------
+# Template implementation
+# ---------------------------------------------------------------------------
+
+class TemplateGenerator(BaseLanguageGenerator):
+    """Rule-based generator using hand-crafted persona-adaptive templates.
+
+    Implements the BaseLanguageGenerator interface; stores the most recent
+    ExplanationResult and UserProfile context so that generate() can produce
+    persona-appropriate output without a live LLM.
+    """
+
+    def __init__(self):
+        self._explanation: Optional[ExplanationResult] = None
+        self._profile: Optional[UserProfile] = None
+
+    def set_context(self, explanation: ExplanationResult, profile: UserProfile):
+        """Store context used by the next generate() call."""
+        self._explanation = explanation
+        self._profile = profile
+
+    def generate(self, prompt: str) -> str:  # noqa: ARG002 — prompt unused; context drives output
+        if self._explanation is not None and self._profile is not None:
+            return _template_fallback(self._explanation, self._profile)
+        return "Explanation unavailable — no context provided."
+
+
+# ---------------------------------------------------------------------------
+# NLGModule — public API (unchanged interface)
+# ---------------------------------------------------------------------------
+
+class NLGModule:
+    """Generates persona-adaptive threat explanations.
+
+    Automatically selects the best available generator:
+      1. OllamaGenerator (if Ollama is running and model is installed)
+      2. TemplateGenerator (always available, no dependencies)
+
+    Accepts an explicit generator via the constructor for testing or custom backends.
+    """
+
+    def __init__(self, generator: Optional[BaseLanguageGenerator] = None):
+        if generator is not None:
+            self._generator: BaseLanguageGenerator = generator
+            self._ollama: Optional[OllamaGenerator] = (
+                generator if isinstance(generator, OllamaGenerator) else None
+            )
+        else:
+            ollama = OllamaGenerator(DEFAULT_MODEL, OLLAMA_BASE_URL, REQUEST_TIMEOUT)
+            if ollama.is_available():
+                self._generator = ollama
+                self._ollama = ollama
+                logger.info("Using OllamaGenerator (model: %s)", ollama.model)
+            else:
+                self._generator = TemplateGenerator()
+                self._ollama = None
+                logger.info("Using TemplateGenerator (Ollama unavailable)")
+
+    # ------------------------------------------------------------------
+    # Public API (app.py calls these — do not change signatures)
+    # ------------------------------------------------------------------
+
+    def generate(self, explanation: ExplanationResult, profile: UserProfile) -> str:
+        """Generate a natural language explanation for the given alert and user profile."""
+        if isinstance(self._generator, TemplateGenerator):
+            self._generator.set_context(explanation, profile)
+        prompt = _build_prompt(explanation, profile)
+        try:
+            return self._generator.generate(prompt)
+        except Exception as exc:
+            logger.error("Generator failed: %s — falling back to template.", exc)
+            return _template_fallback(explanation, profile)
+
+    def list_available_models(self) -> list[str]:
+        """Return list of model names available in Ollama (empty if Ollama is offline)."""
+        # Try the current generator first
+        if self._ollama is not None:
+            return self._ollama.list_models()
+        # Try a fresh Ollama probe even if current generator is template
+        try:
+            return OllamaGenerator().list_models()
+        except Exception:
+            return []
+
     def set_model(self, model_name: str):
-        self.model = model_name
-        self._ollama_available = None
+        """Switch the active Ollama model (no-op if Ollama is unavailable)."""
+        if self._ollama is not None:
+            self._ollama.set_model(model_name)
+        elif isinstance(self._generator, OllamaGenerator):
+            self._generator.set_model(model_name)

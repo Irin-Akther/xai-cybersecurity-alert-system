@@ -238,8 +238,8 @@ with st.sidebar:
 # ---------------------------------------------------------------------------
 # Tabs
 # ---------------------------------------------------------------------------
-tab_detect, tab_batch, tab_history, tab_quiz, tab_about = st.tabs(
-    ["🔍 Detect Threat", "📂 Batch Analysis", "📋 Alert History", "📝 Profile Quiz", "ℹ️ About"]
+tab_detect, tab_batch, tab_history, tab_quiz, tab_about, tab_study = st.tabs(
+    ["🔍 Detect Threat", "📂 Batch Analysis", "📋 Alert History", "📝 Profile Quiz", "ℹ️ About", "👥 User Study"]
 )
 
 # ===========================================================================
@@ -315,6 +315,9 @@ with tab_detect:
 
             st.markdown("### What this means for you")
             st.write(card.user_explanation)
+
+            st.markdown("**🎯 How certain is this detection?**")
+            st.info(card.confidence_explanation)
 
             with st.expander("📊 SHAP Feature Contributions", expanded=True):
                 st.caption("Features pushing toward ATTACK (red/positive) vs BENIGN (blue/negative)")
@@ -432,6 +435,85 @@ with tab_quiz:
             f"({new_profile.level.value} level). "
             "Alerts will now be explained in your style."
         )
+
+# ===========================================================================
+# ===========================================================================
+# TAB 6 — User Study
+# ===========================================================================
+with tab_study:
+    st.header("User Study — Readability Feedback")
+    st.markdown(
+        "Help us improve! Read the sample alert below and answer 5 quick questions. "
+        "Your responses are stored anonymously and used only for research."
+    )
+    st.divider()
+
+    sample_profile = make_profile(Persona.GENERAL_EMPLOYEE)
+    from modules.xai_explainer import ExplanationResult as _ER, FeatureContribution as _FC
+    from modules.nlg_module import _template_fallback as _tf
+    _sample_exp = _ER(
+        predicted_label=1, confidence=0.91, base_value=0.5,
+        top_features=[
+            _FC("Flow Packets/s", 450000.0, 0.38, "increases_risk"),
+            _FC("SYN Flag Count", 5.0, 0.21, "increases_risk"),
+            _FC("Flow Duration", 1200.0, 0.14, "increases_risk"),
+        ],
+    )
+    _sample_text = _tf(_sample_exp, sample_profile)
+    st.markdown(
+        "<div style='background:#ff4b4b20;border-left:5px solid #ff4b4b;"
+        "padding:14px;border-radius:6px;margin-bottom:12px'>"
+        "<h4 style='color:#ff4b4b;margin:0'>HIGH — ATTACK DETECTED</h4>"
+        "<p style='margin:4px 0 0'>Confidence: 91.0% | Profile: General Employee</p></div>",
+        unsafe_allow_html=True,
+    )
+    st.write(_sample_text)
+    st.info(
+        "The system is highly confident in this detection. "
+        "The network pattern strongly matches known attack signatures."
+    )
+    st.markdown("**Recommended actions:**")
+    st.write("1. Stop using your work device and disconnect from the network.")
+    st.write("2. Contact your IT helpdesk or support team immediately.")
+    st.write("3. Do not open emails or attachments until cleared.")
+
+    st.divider()
+    st.subheader("Survey Questions")
+
+    with st.form("user_study_form", clear_on_submit=True):
+        q1 = st.radio("Q1. Did you understand what happened?", ["Yes", "Somewhat", "No"], horizontal=True)
+        q2 = st.radio("Q2. Did you understand what to do next?", ["Yes", "Somewhat", "No"], horizontal=True)
+        q3 = st.slider("Q3. How clear was the language? (1 = very confusing, 5 = very clear)", 1, 5, 3)
+        q4 = st.radio("Q4. Would this alert make you take action?", ["Yes", "Maybe", "No"], horizontal=True)
+        q5 = st.radio("Q5. What is your technical background?",
+                      ["Non-technical", "Some tech knowledge", "IT professional"], horizontal=True)
+        submitted = st.form_submit_button("Submit Response", type="primary", use_container_width=True)
+
+    if submitted:
+        import csv as _csv2
+        import datetime as _dt2
+        _rpath = PROJECT_ROOT / "data" / "user_study_responses.csv"
+        _rpath.parent.mkdir(parents=True, exist_ok=True)
+        _write_hdr = not _rpath.exists()
+        with open(_rpath, "a", newline="", encoding="utf-8") as _f:
+            _w = _csv2.writer(_f)
+            if _write_hdr:
+                _w.writerow(["timestamp", "q1_understood_what", "q2_understood_action",
+                             "q3_clarity", "q4_would_act", "q5_background"])
+            _w.writerow([_dt2.datetime.now().isoformat(timespec="seconds"), q1, q2, q3, q4, q5])
+        st.success("Thank you! Your response has been recorded.")
+
+    _rpath2 = PROJECT_ROOT / "data" / "user_study_responses.csv"
+    if _rpath2.exists():
+        try:
+            import csv as _csv3
+            with open(_rpath2, encoding="utf-8") as _f2:
+                _count = sum(1 for _ in _csv3.reader(_f2)) - 1
+            st.metric("Responses collected so far", max(0, _count))
+        except Exception:
+            pass
+    else:
+        st.metric("Responses collected so far", 0)
 
 # ===========================================================================
 # TAB 5 — About
