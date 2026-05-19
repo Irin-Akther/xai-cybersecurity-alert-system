@@ -141,11 +141,11 @@ class XAIExplainer:
         """Return (n_samples, n_features) float64 SHAP array; falls back to importances."""
         try:
             if self._explainer is None:
-                self._explainer = shap.TreeExplainer(
-                    self._detector.model,
-                    feature_perturbation="tree_path_dependent",
-                )
-            # Pass numpy array — avoids pandas/SHAP version incompatibilities
+                try:
+                    self._explainer = shap.TreeExplainer(self._detector.model)
+                except Exception as e1:
+                    logger.warning("TreeExplainer init failed (%s)", e1)
+                    return self._importance_matrix(n_samples, n_features)
             X_np = np.asarray(X_clean.values, dtype=float)
             try:
                 sv = self._explainer.shap_values(X_np, check_additivity=False)
