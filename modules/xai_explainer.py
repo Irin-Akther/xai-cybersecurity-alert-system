@@ -91,12 +91,22 @@ class XAIExplainer:
         X_clean = self._prepare(X)
 
         shap_values = explainer.shap_values(X_clean)
-        # shap_values is a list [benign_shaps, attack_shaps] for binary classification
-        attack_shaps = shap_values[1] if isinstance(shap_values, list) else shap_values
+        # Robust extraction: handles list, 3-D array (n_samples, n_features, n_classes),
+        # or a SHAP Explanation object returned by newer shap versions.
+        if isinstance(shap_values, list):
+            attack_shaps = np.array(shap_values[1])
+        elif hasattr(shap_values, "values"):
+            v = np.array(shap_values.values)
+            attack_shaps = v[:, :, 1] if v.ndim == 3 else v
+        else:
+            sv = np.array(shap_values)
+            attack_shaps = sv[:, :, 1] if sv.ndim == 3 else sv
 
         base_value = explainer.expected_value
-        if isinstance(base_value, (list, np.ndarray)):
-            base_value = float(base_value[1])
+        if hasattr(base_value, "__len__"):
+            base_value = float(np.ravel(base_value)[1])
+        else:
+            base_value = float(base_value)
 
         probas = self._detector.predict_proba(X)
         preds = self._detector.predict(X)
@@ -109,12 +119,14 @@ class XAIExplainer:
 
             contributions = []
             for fname, fval, sval in zip(feature_names, row_vals, row_shap):
+                # ravel guards against SHAP returning a 1-element array instead of scalar
+                shap_val = float(np.ravel(np.asarray(sval))[0])
                 contributions.append(
                     FeatureContribution(
                         name=fname,
-                        value=float(fval),
-                        shap_value=float(sval),
-                        direction="increases_risk" if sval > 0 else "decreases_risk",
+                        value=float(np.ravel(np.asarray(fval))[0]),
+                        shap_value=shap_val,
+                        direction="increases_risk" if shap_val > 0 else "decreases_risk",
                     )
                 )
 
@@ -160,5 +172,12 @@ class XAIExplainer:
         explainer = self._get_explainer()
         X_clean = self._prepare(X)
         shap_values = explainer.shap_values(X_clean)
-        attack_shaps = shap_values[1] if isinstance(shap_values, list) else shap_values
+        if isinstance(shap_values, list):
+            attack_shaps = np.array(shap_values[1])
+        elif hasattr(shap_values, "values"):
+            v = np.array(shap_values.values)
+            attack_shaps = v[:, :, 1] if v.ndim == 3 else v
+        else:
+            sv = np.array(shap_values)
+            attack_shaps = sv[:, :, 1] if sv.ndim == 3 else sv
         return attack_shaps, self._detector.feature_names

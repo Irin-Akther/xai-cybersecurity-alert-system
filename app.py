@@ -258,24 +258,6 @@ with tab_detect:
     )
     st.divider()
 
-    st.subheader("Quick Scenarios")
-    cols_scenarios = st.columns(3)
-    selected_scenario = None
-    for idx, (name, desc) in enumerate(SCENARIO_DESCRIPTIONS.items()):
-        col = cols_scenarios[idx % 3]
-        if col.button(f"**{name}**\n\n{desc}", key=f"btn_{name}", use_container_width=True):
-            selected_scenario = name
-
-    if selected_scenario:
-        st.session_state["active_scenario"] = selected_scenario
-
-    active = st.session_state.get("active_scenario", "— Manual entry —")
-    prefill = SCENARIO_DATA.get(active, {})
-    if active != "— Manual entry —":
-        st.info(f"Loaded scenario: **{active}** — {SCENARIO_DESCRIPTIONS.get(active, '')}")
-
-    st.divider()
-    st.subheader("Flow Feature Values")
     ui_features = [
         "Flow Duration", "Total Fwd Packets", "Total Backward Packets",
         "Flow Bytes/s", "Flow Packets/s",
@@ -284,12 +266,30 @@ with tab_detect:
         "SYN Flag Count", "RST Flag Count", "ACK Flag Count",
         "FIN Flag Count", "PSH Flag Count",
     ]
+
+    st.subheader("Quick Scenarios")
+    cols_scenarios = st.columns(3)
+    for idx, (name, desc) in enumerate(SCENARIO_DESCRIPTIONS.items()):
+        col = cols_scenarios[idx % 3]
+        if col.button(f"**{name}**\n\n{desc}", key=f"btn_{name}", use_container_width=True):
+            st.session_state["active_scenario"] = name
+            # Explicitly write into each widget's session-state key so Streamlit
+            # picks up the new value even though the keys already exist.
+            scenario_vals = SCENARIO_DATA[name]
+            for feat in ui_features:
+                st.session_state[f"feat_{feat}"] = float(scenario_vals.get(feat, 0.0))
+
+    active = st.session_state.get("active_scenario", "— Manual entry —")
+    if active != "— Manual entry —":
+        st.info(f"Loaded scenario: **{active}** — {SCENARIO_DESCRIPTIONS.get(active, '')}")
+
+    st.divider()
+    st.subheader("Flow Feature Values")
     user_features: dict = {}
     feat_cols = st.columns(3)
     for idx, feat in enumerate(ui_features):
         col = feat_cols[idx % 3]
-        default_val = float(prefill.get(feat, 0.0))
-        user_features[feat] = col.number_input(feat, value=default_val, format="%.2f", key=f"feat_{feat}")
+        user_features[feat] = col.number_input(feat, format="%.2f", key=f"feat_{feat}")
 
     if st.button("🔍 Analyse Flow", use_container_width=True, type="primary"):
         if not st.session_state.model_trained:
