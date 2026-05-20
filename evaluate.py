@@ -268,9 +268,9 @@ def main():
     lr_pipeline = Pipeline([
         ("scaler", StandardScaler()),
         ("clf", LogisticRegression(
-            max_iter=1000,
+            max_iter=2000,
             class_weight="balanced",
-            solver="lbfgs",
+            solver="saga",   # saga scales better than lbfgs on large datasets
             n_jobs=-1,
             random_state=RANDOM_STATE,
         )),
