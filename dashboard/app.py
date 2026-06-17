@@ -205,7 +205,7 @@ def _render_feature_bar(top_features: list[dict]):
 # ---------------------------------------------------------------------------
 with st.sidebar:
     st.title("🛡️ XAI Cybersecurity\nAlert System")
-    st.caption("v2.0 | Privacy-Preserving | Patent-Pending")
+    st.caption("v2.0 | Privacy-Preserving | Patent Pending — U.S. App. No. 64/092,229")
     st.divider()
 
     st.subheader("🤖 Detection Model")
@@ -530,7 +530,7 @@ with tab_about:
     st.markdown("""
 ## XAI Cybersecurity Alert System — v2.0
 
-**Status:** Patent-Pending Research
+**Status:** Patent Pending — U.S. Application No. 64/092,229 (filed June 16, 2026)
 
 🌐 **Live Demo:** [xai-cybersecurity-alert-system-flmwn94cvuxsyllsvudhsl.streamlit.app](https://xai-cybersecurity-alert-system-flmwn94cvuxsyllsvudhsl.streamlit.app/)
 
@@ -576,5 +576,8 @@ with tab_about:
 All inference runs locally. No data is sent to external APIs.
 
 ---
-*Developed by Irin — Cybersecurity Research*
+*Developed by Irin Akther — Cybersecurity Research*
+
+---
+**Patent Pending — U.S. Application No. 64/092,229, filed June 16, 2026.**
     """)

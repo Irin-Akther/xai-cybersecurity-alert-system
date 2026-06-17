@@ -2,7 +2,7 @@
 
 **Reading-level-adaptive, privacy-preserving threat explanation using Random Forest + SHAP + Local LLM**
 
-> ⚠️ Patent-pending research. All rights reserved.
+> 🔒 **Patent Pending — U.S. Application No. 64/092,229** | All rights reserved.
 
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Streamlit-FF4B4B?style=for-the-badge&logo=streamlit)](https://xai-cybersecurity-alert-system-flmwn94cvuxsyllsvudhsl.streamlit.app/)
 [![Python](https://img.shields.io/badge/Python-3.11-blue?style=for-the-badge&logo=python)](https://python.org)
